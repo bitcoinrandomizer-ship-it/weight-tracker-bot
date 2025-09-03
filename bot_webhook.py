@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
+import telegram
 
 import pytz
 import gspread
@@ -11,6 +12,8 @@ from google.oauth2.service_account import Credentials
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+
+print("python-telegram-bot version:", telegram.__version__)
 
 # --- Logging setup ---
 logging.basicConfig(
