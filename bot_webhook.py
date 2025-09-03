@@ -1,9 +1,7 @@
 import os
 import json
 import logging
-import asyncio
 from datetime import datetime, timedelta
-import telegram
 
 import pytz
 import gspread
@@ -11,9 +9,7 @@ from google.oauth2.service_account import Credentials
 
 from aiohttp import web
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-
-print("python-telegram-bot version:", telegram.__version__)
+from telegram.ext import Updater, CommandHandler, CallbackContext
 
 # --- Logging setup ---
 logging.basicConfig(
@@ -22,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Configuration from environment variables ---
+# --- Config ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 GOOGLE_CREDENTIALS = os.environ.get('GOOGLE_CREDENTIALS')
 SPREADSHEET_NAME = os.environ.get('SPREADSHEET_NAME', 'Tracciamento Peso')
@@ -30,7 +26,7 @@ TIMEZONE = pytz.timezone('Europe/Rome')
 PORT = int(os.environ.get('PORT', '10000'))
 RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL')
 
-# --- Core bot class ---
+# --- Bot Core ---
 class WeightTrackerBot:
     def __init__(self):
         self.setup_google_sheets()
@@ -66,7 +62,8 @@ class WeightTrackerBot:
             logger.error(f"❌ Errore Google Sheets: {e}")
             raise
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # --- Command handlers ---
+    def start(self, update: Update, context: CallbackContext):
         user = update.effective_user
         welcome_message = (
             f"Ciao {user.first_name}! 👋\n\n"
@@ -78,15 +75,15 @@ class WeightTrackerBot:
             "• `/help` - Mostra questo messaggio di aiuto\n\n"
             "Inizia registrando il tuo peso oggi!"
         )
-        await update.message.reply_text(welcome_message, parse_mode='Markdown')
+        update.message.reply_text(welcome_message, parse_mode='Markdown')
 
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.start(update, context)
+    def help_command(self, update: Update, context: CallbackContext):
+        self.start(update, context)
 
-    async def register_weight(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def register_weight(self, update: Update, context: CallbackContext):
         user = update.effective_user
         if not context.args:
-            await update.message.reply_text(
+            update.message.reply_text(
                 "❌ Specifica il peso.\nEsempio: `/peso 75.5`",
                 parse_mode='Markdown'
             )
@@ -94,7 +91,7 @@ class WeightTrackerBot:
         try:
             weight = float(context.args[0].replace(',', '.'))
             if weight < 20 or weight > 300:
-                await update.message.reply_text(
+                update.message.reply_text(
                     "❌ Peso deve essere tra 20 e 300 kg.")
                 return
 
@@ -119,17 +116,17 @@ class WeightTrackerBot:
             else:
                 self.worksheet.append_row(data)
                 msg = f"✅ Peso registrato: **{weight} kg**"
-            await update.message.reply_text(msg, parse_mode='Markdown')
+            update.message.reply_text(msg, parse_mode='Markdown')
 
         except ValueError:
-            await update.message.reply_text(
+            update.message.reply_text(
                 "❌ Formato non valido.\nEsempio: `/peso 75.5`",
                 parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Errore: {e}")
-            await update.message.reply_text("❌ Errore nel salvare il peso.")
+            update.message.reply_text("❌ Errore nel salvare il peso.")
 
-    async def weekly_average(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def weekly_average(self, update: Update, context: CallbackContext):
         user = update.effective_user
         try:
             today = datetime.now(TIMEZONE).date()
@@ -149,7 +146,7 @@ class WeightTrackerBot:
                         continue
 
             if not weekly:
-                await update.message.reply_text(
+                update.message.reply_text(
                     f"📊 **Media settimanale**\n"
                     f"Periodo: {last_monday.strftime('%d/%m')} - {last_sunday.strftime('%d/%m')}\n"
                     f"❌ Nessun peso registrato",
@@ -169,13 +166,13 @@ class WeightTrackerBot:
             )
             for w in weekly:
                 msg += f"• {w['data'].strftime('%d/%m')}: {w['peso']:.1f} kg\n"
-            await update.message.reply_text(msg, parse_mode='Markdown')
+            update.message.reply_text(msg, parse_mode='Markdown')
 
         except Exception as e:
             logger.error(f"Errore media: {e}")
-            await update.message.reply_text("❌ Errore nel calcolare la media.")
+            update.message.reply_text("❌ Errore nel calcolare la media.")
 
-    async def history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def history(self, update: Update, context: CallbackContext):
         user = update.effective_user
         try:
             all_records = self.worksheet.get_all_records()
@@ -189,7 +186,7 @@ class WeightTrackerBot:
                         continue
 
             if not user_records:
-                await update.message.reply_text("📈 Nessun peso registrato.")
+                update.message.reply_text("📈 Nessun peso registrato.")
                 return
 
             user_records.sort(key=lambda x: x['data'], reverse=True)
@@ -216,75 +213,45 @@ class WeightTrackerBot:
                 elif weights[0] > weights[-1]:
                     msg += f"\n📈 Trend: +{weights[0] - weights[-1]:.1f} kg"
 
-            await update.message.reply_text(msg, parse_mode='Markdown')
+            update.message.reply_text(msg, parse_mode='Markdown')
 
         except Exception as e:
             logger.error(f"Errore storico: {e}")
-            await update.message.reply_text("❌ Errore nel recuperare lo storico.")
+            update.message.reply_text("❌ Errore nel recuperare lo storico.")
 
-# --- Main entrypoint con webhook aiohttp ---
-async def main():
+# --- Main entrypoint ---
+def main():
     if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS:
         logger.error("❌ Variabili d'ambiente mancanti!")
         return
 
     logger.info("🚀 Avvio bot con webhook…")
-
     bot = WeightTrackerBot()
 
-    application = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .concurrent_updates(True)
-        .build()
-    )
+    updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-    # Handler
-    application.add_handler(CommandHandler("start", bot.start))
-    application.add_handler(CommandHandler("help", bot.help_command))
-    application.add_handler(CommandHandler("peso", bot.register_weight))
-    application.add_handler(CommandHandler("media", bot.weekly_average))
-    application.add_handler(CommandHandler("storico", bot.history))
+    # Handlers
+    dp.add_handler(CommandHandler("start", bot.start))
+    dp.add_handler(CommandHandler("help", bot.help_command))
+    dp.add_handler(CommandHandler("peso", bot.register_weight))
+    dp.add_handler(CommandHandler("media", bot.weekly_average))
+    dp.add_handler(CommandHandler("storico", bot.history))
 
-    # Webhook
+    # --- Webhook support ---
     if RENDER_EXTERNAL_URL:
-        webhook_url = f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
-        await application.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
-        logger.info(f"✅ Webhook configurato: {webhook_url}")
+        updater.start_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TELEGRAM_TOKEN,
+            webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
+        )
+        logger.info(f"✅ Webhook configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
+    else:
+        updater.start_polling()
+        logger.info("✅ Polling avviato")
 
-    # Server web aiohttp per ricevere aggiornamenti
-    async def handle(request):
-        if request.match_info.get("token") == TELEGRAM_TOKEN:
-            data = await request.read()
-            update = Update.de_json(json.loads(data), application.bot)
-            await application.update_queue.put(update)
-            return web.Response(text="OK")
-        return web.Response(status=403)
-
-    async def health(request):
-        return web.Response(text="Bot is running!")
-
-    app = web.Application()
-    app.router.add_post(f"/{TELEGRAM_TOKEN}", handle)
-    app.router.add_get("/", health)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-
-    logger.info(f"✅ Server web avviato su porta {PORT}")
-
-    # Avvio solo webhook, senza polling
-    await application.initialize()
-    await application.start()
-    try:
-        await asyncio.Event().wait()
-    except (KeyboardInterrupt, SystemExit):
-        pass
-    finally:
-        await application.stop()
-        await application.shutdown()
+    updater.idle()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
