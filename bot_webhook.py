@@ -222,7 +222,7 @@ class WeightTrackerBot:
             logger.error(f"Errore storico: {e}")
             await update.message.reply_text("❌ Errore nel recuperare lo storico.")
 
-# --- Main entrypoint with aiohttp webhook support ---
+# --- Main entrypoint con webhook aiohttp ---
 async def main():
     if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS:
         logger.error("❌ Variabili d'ambiente mancanti!")
@@ -252,7 +252,7 @@ async def main():
         await application.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
         logger.info(f"✅ Webhook configurato: {webhook_url}")
 
-    # Server web aiohttp
+    # Server web aiohttp per ricevere aggiornamenti
     async def handle(request):
         if request.match_info.get("token") == TELEGRAM_TOKEN:
             data = await request.read()
@@ -275,7 +275,7 @@ async def main():
 
     logger.info(f"✅ Server web avviato su porta {PORT}")
 
-    # Mantieni in esecuzione
+    # Avvio solo webhook, senza polling
     await application.initialize()
     await application.start()
     try:
