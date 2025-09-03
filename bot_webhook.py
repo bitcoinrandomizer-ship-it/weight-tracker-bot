@@ -225,59 +225,66 @@ class WeightTrackerBot:
 # --- Main entrypoint with aiohttp webhook support ---
 async def main():
     if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS:
-        logger.error("❌ Variabili d’ambiente mancanti!")
+        logger.error("❌ Variabili d'ambiente mancanti!")
         return
 
     logger.info("🚀 Avvio bot con webhook…")
-    bot = WeightTrackerBot()
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Register handlers
+    bot = WeightTrackerBot()
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
+
+    # Handler
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CommandHandler("peso", bot.register_weight))
     application.add_handler(CommandHandler("media", bot.weekly_average))
     application.add_handler(CommandHandler("storico", bot.history))
 
-    await application.initialize()
-    await application.start()
-
-    # Set webhook
+    # Webhook
     if RENDER_EXTERNAL_URL:
         webhook_url = f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
-        await application.bot.set_webhook(webhook_url)
-        logger.info(f"✅ Webhook impostato su: {webhook_url}")
+        await application.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
+        logger.info(f"✅ Webhook configurato: {webhook_url}")
 
-    # aiohttp server for receiving updates
+    # Server web aiohttp
     async def handle(request):
-        if request.match_info.get('token') != TELEGRAM_TOKEN:
-            return web.Response(status=403)
-        data = await request.read()
-        update = Update.de_json(json.loads(data.decode("utf-8")), application.bot)
-        await application.process_update(update)
-        return web.Response(text="OK")
+        if request.match_info.get("token") == TELEGRAM_TOKEN:
+            data = await request.read()
+            update = Update.de_json(json.loads(data), application.bot)
+            await application.update_queue.put(update)
+            return web.Response(text="OK")
+        return web.Response(status=403)
 
     async def health(request):
         return web.Response(text="Bot is running!")
 
     app = web.Application()
-    app.router.add_post(f'/{TELEGRAM_TOKEN}', handle)
-    app.router.add_get('/', health)
+    app.router.add_post(f"/{TELEGRAM_TOKEN}", handle)
+    app.router.add_get("/", health)
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
+
     logger.info(f"✅ Server web avviato su porta {PORT}")
 
-    # Mantieni attivo
+    # Mantieni in esecuzione
+    await application.initialize()
+    await application.start()
     try:
         await asyncio.Event().wait()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        await application.shutdown()
         await application.stop()
+        await application.shutdown()
 
 if __name__ == '__main__':
     asyncio.run(main())
