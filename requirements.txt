@@ -3,3 +3,4 @@ gspread==5.12.3
 google-auth==2.25.2
 google-auth-oauthlib==1.2.0
 pytz==2023.3.post1
+aiohttp==3.9.1
