@@ -48,14 +48,26 @@ class WeightTrackerBot:
                 logger.info(f"Creato nuovo foglio: {SPREADSHEET_NAME}")
 
             try:
-                self.worksheet = self.spreadsheet.worksheet('Pesi')
+                self.weight_sheet = self.spreadsheet.worksheet('Pesi')
             except gspread.WorksheetNotFound:
-                self.worksheet = self.spreadsheet.add_worksheet(
+                self.weight_sheet = self.spreadsheet.add_worksheet(
                     title='Pesi', rows=1000, cols=10)
-                self.worksheet.update('A1:E1', [[
+                self.weight_sheet.update('A1:E1', [[
                     'User ID', 'Username', 'Data', 'Peso (kg)', 'Timestamp'
                 ]])
                 logger.info("Creato nuovo worksheet 'Pesi'")
+            
+            try:
+                self.notif_sheet = self.spreadsheet.worksheet('Notifiche')
+            except gspread.WorksheetNotFound:
+                self.notif_sheet = self.spreadsheet.add_worksheet(
+                    title='Notifiche', rows=1000, cols=5
+                )
+                self.notif_sheet.update('A1:C1', [[
+                    'User ID', 'Username', 'Attivo'
+                ]])
+                logger.info("Creato nuovo worksheet 'Notifiche'")
+
 
             logger.info("✅ Google Sheets configurato")
         except Exception as e:
@@ -98,7 +110,7 @@ class WeightTrackerBot:
             now = datetime.now(TIMEZONE)
             date_str = now.strftime('%Y-%m-%d')
             timestamp_str = now.strftime('%Y-%m-%d %H:%M:%S')
-            all_records = self.worksheet.get_all_records()
+            all_records = self.weight_sheet.get_all_records()
             today_row = None
             for idx, record in enumerate(all_records, start=2):
                 if (str(record.get('User ID')) == str(user.id) and
@@ -111,10 +123,10 @@ class WeightTrackerBot:
                 date_str, weight, timestamp_str
             ]
             if today_row:
-                self.worksheet.update(f'A{today_row}:E{today_row}', [data])
+                self.weight_sheet.update(f'A{today_row}:E{today_row}', [data])
                 msg = f"✅ Peso aggiornato: **{weight} kg**"
             else:
-                self.worksheet.append_row(data)
+                self.weight_sheet.append_row(data)
                 msg = f"✅ Peso registrato: **{weight} kg**"
             update.message.reply_text(msg, parse_mode='Markdown')
 
@@ -134,7 +146,7 @@ class WeightTrackerBot:
             last_monday = today - timedelta(days=days_since_monday + 7)
             last_sunday = last_monday + timedelta(days=6)
 
-            all_records = self.worksheet.get_all_records()
+            all_records = self.weight_sheet.get_all_records()
             weekly = []
             for rec in all_records:
                 if str(rec.get('User ID')) == str(user.id):
@@ -175,7 +187,7 @@ class WeightTrackerBot:
     def history(self, update: Update, context: CallbackContext):
         user = update.effective_user
         try:
-            all_records = self.worksheet.get_all_records()
+            all_records = self.weight_sheet.get_all_records()
             user_records = []
             for rec in all_records:
                 if str(rec.get('User ID')) == str(user.id):
@@ -218,6 +230,49 @@ class WeightTrackerBot:
         except Exception as e:
             logger.error(f"Errore storico: {e}")
             update.message.reply_text("❌ Errore nel recuperare lo storico.")
+    
+    def toggle_notifica(self, update: Update, context: CallbackContext):
+        user = update.effective_user
+        if not context.args:
+            update.message.reply_text("❌ Usa: `/notifica on` oppure `/notifica off`", parse_mode='Markdown')
+            return
+
+        stato = context.args[0].lower()
+        if stato not in ["on", "off"]:
+            update.message.reply_text("❌ Usa: `/notifica on` oppure `/notifica off`", parse_mode='Markdown')
+            return
+
+        all_records = self.notif_sheet.get_all_records()
+        user_row = None
+        for idx, record in enumerate(all_records, start=2):
+            if str(record.get('User ID')) == str(user.id):
+                user_row = idx
+                break
+
+        if stato == "on":
+            data = [str(user.id), user.username or user.first_name, "TRUE"]
+            if user_row:
+                self.notif_sheet.update(f"A{user_row}:C{user_row}", [data])
+            else:
+                self.notif_sheet.append_row(data)
+            update.message.reply_text("🔔 Notifiche attivate!")
+        else:
+            if user_row:
+                self.notif_sheet.update(f"C{user_row}", [["FALSE"]])
+            update.message.reply_text("🔕 Notifiche disattivate!")
+
+    def send_daily_notifications(self, context: CallbackContext):
+        try:
+            all_records = self.notif_sheet.get_all_records()
+            for rec in all_records:
+                if str(rec.get('Attivo')).upper() == "TRUE":
+                    chat_id = int(rec.get('User ID'))
+                    context.bot.send_message(
+                        chat_id=chat_id,
+                        text="⏰ Buongiorno! Ricordati di registrare il tuo peso con il comando /peso 💪"
+                    )
+        except Exception as e:
+            logger.error(f"Errore invio notifiche: {e}")
 
 # --- Main entrypoint ---
 def main():
@@ -237,6 +292,7 @@ def main():
     dp.add_handler(CommandHandler("peso", bot.register_weight))
     dp.add_handler(CommandHandler("media", bot.weekly_average))
     dp.add_handler(CommandHandler("storico", bot.history))
+    dp.add_handler(CommandHandler("notifica", bot.toggle_notifica))
 
     # --- Webhook support ---
     if RENDER_EXTERNAL_URL:
@@ -250,6 +306,13 @@ def main():
     else:
         updater.start_polling()
         logger.info("✅ Polling avviato")
+    
+    # Job giornaliero alle 08:00
+    job_queue = updater.job_queue
+    job_queue.run_daily(
+        bot.send_daily_notifications,
+        time=datetime.time(hour=8, minute=0, tzinfo=TIMEZONE)
+    )
 
     updater.idle()
 
