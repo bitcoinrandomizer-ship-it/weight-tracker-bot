@@ -281,6 +281,7 @@ async def handle_health(request):
 
 async def handle_webhook(request):
     data = await request.json()
+    updater = request.app['updater']
     update = Update.de_json(data, updater.bot)
     updater.dispatcher.process_update(update)
     return web.Response(text="OK")
@@ -318,6 +319,7 @@ def main():
 
     # --- Server aiohttp ---
     app = web.Application()
+    app['updater'] = updater
     app.router.add_get("/health", handle_health)
     app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
     logger.info("✅ Server aiohttp pronto su /health e webhook")
