@@ -279,14 +279,21 @@ class WeightTrackerBot:
 async def handle_health(request):
     return web.Response(text="OK", status=200)
 
+async def handle_webhook(request):
+    data = await request.json()
+    update = Update.de_json(data, updater.bot)
+    updater.dispatcher.process_update(update)
+    return web.Response(text="OK")
+
 async def start_web_server():
     app = web.Application()
-    app.add_routes([web.get('/health', handle_health)])
+    app.router.add_get("/health", handle_health)
+    app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info(f"✅ Health server running on port {PORT}")
+    logger.info(f"✅ Server aiohttp avviato su /health e /{TELEGRAM_TOKEN}")
 
 # --- Main entrypoint ---
 def main():
@@ -307,18 +314,6 @@ def main():
     dp.add_handler(CommandHandler("media", bot.weekly_average))
     dp.add_handler(CommandHandler("storico", bot.history))
     dp.add_handler(CommandHandler("notifica", bot.toggle_notifica))
-
-    if RENDER_EXTERNAL_URL:      
-        updater.start_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TELEGRAM_TOKEN,
-            webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
-        )
-        logger.info(f"✅ Webhook configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
-    else:
-        updater.start_polling()
-        logger.info("✅ Polling avviato")
     
     # Job giornaliero alle 08:00
     job_queue = updater.job_queue
@@ -329,6 +324,9 @@ def main():
     
     loop = asyncio.get_event_loop()
     loop.create_task(start_web_server())
+    
+    updater.bot.set_webhook(f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
+    logger.info(f"✅ Webhook Telegram configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
 
     updater.idle()
 
