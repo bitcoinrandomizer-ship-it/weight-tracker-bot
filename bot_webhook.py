@@ -285,16 +285,6 @@ async def handle_webhook(request):
     updater.dispatcher.process_update(update)
     return web.Response(text="OK")
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/health", handle_health)
-    app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logger.info(f"✅ Server aiohttp avviato su /health e /{TELEGRAM_TOKEN}")
-
 # --- Main entrypoint ---
 def main():
     if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS:
@@ -322,12 +312,18 @@ def main():
         time=time(hour=8, minute=0, tzinfo=TIMEZONE)
     )
     
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_web_server())
-    
+    # Configura il webhook Telegram
     updater.bot.set_webhook(f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
     logger.info(f"✅ Webhook Telegram configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
 
+    # --- Server aiohttp ---
+    app = web.Application()
+    app.router.add_get("/health", handle_health)
+    app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
+    logger.info("✅ Server aiohttp pronto su /health e webhook")
+    
+    # Avvia il server aiohttp (Render richiede run_app)
+    web.run_app(app, host="0.0.0.0", port=PORT)
     updater.idle()
 
 if __name__ == '__main__':
