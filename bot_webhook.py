@@ -263,18 +263,42 @@ class WeightTrackerBot:
                 self.notif_sheet.update(f"C{user_row}", [["FALSE"]])
             update.message.reply_text("🔕 Notifiche disattivate!")
 
-    def send_daily_notifications(self, context: CallbackContext):
+    def send_daily_notifications(self, updater):
         try:
             all_records = self.notif_sheet.get_all_records()
             for rec in all_records:
                 if str(rec.get('Attivo')).upper() == "TRUE":
                     chat_id = int(rec.get('User ID'))
-                    context.bot.send_message(
+                    updater.bot.send_message(
                         chat_id=chat_id,
                         text="⏰ Buongiorno! Ricordati di registrare il tuo peso con il comando /peso 💪"
                     )
         except Exception as e:
             logger.error(f"Errore invio notifiche: {e}")
+
+async def scheduler(bot: WeightTrackerBot, updater):
+    while True:
+        now = datetime.now(TIMEZONE)
+        target = datetime.combine(now.date(), time(8, 0, tzinfo=TIMEZONE))
+        
+        # se siamo già oltre le 8:00, manda il reminder domani
+        if now >= target:
+            target += timedelta(days=1)
+
+        # calcola quanti secondi mancano alle 8
+        wait_seconds = (target - now).total_seconds()
+        logger.info(f"⏳ Prossima notifica alle {target} (tra {wait_seconds/60:.1f} minuti)")
+
+        # dorme fino alle 8 (rilasciando l’event loop, quindi niente CPU sprecata)
+        await asyncio.sleep(wait_seconds)
+
+        # prova a mandare le notifiche
+        try:
+            bot.send_daily_notifications(updater)  # NB: passiamo updater, non context
+            logger.info("✅ Notifiche giornaliere inviate")
+        except Exception as e:
+            logger.error(f"Errore scheduler: {e}")
+
 
 async def handle_health(request):
     return web.Response(text="OK", status=200)
@@ -306,13 +330,10 @@ def main():
     dp.add_handler(CommandHandler("storico", bot.history))
     dp.add_handler(CommandHandler("notifica", bot.toggle_notifica))
     
-    # Job giornaliero alle 08:00
-    job_queue = updater.job_queue
-    job_queue.run_daily(
-        bot.send_daily_notifications,
-        time=time(hour=8, minute=0, tzinfo=TIMEZONE)
-    )
-    
+    # Avvia lo scheduler asincrono per le notifiche giornaliere
+    loop = asyncio.get_event_loop()
+    loop.create_task(scheduler(bot, updater))
+
     # Configura il webhook Telegram
     updater.bot.set_webhook(f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
     logger.info(f"✅ Webhook Telegram configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
