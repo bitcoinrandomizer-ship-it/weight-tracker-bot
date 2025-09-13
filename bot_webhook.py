@@ -84,6 +84,7 @@ class WeightTrackerBot:
             "• `/peso [valore]` - Registra il tuo peso (es: /peso 75.5)\n"
             "• `/media` - Mostra la media della settimana precedente\n"
             "• `/storico` - Mostra gli ultimi 7 pesi registrati\n"
+            "• `/notifica [valore]` - Attiva o disattiva l'invio di reminder alle 08:00 di mattina (es: /notifica on)\n"
             "• `/help` - Mostra questo messaggio di aiuto\n\n"
             "Inizia registrando il tuo peso oggi!"
         )
@@ -274,6 +275,9 @@ class WeightTrackerBot:
         except Exception as e:
             logger.error(f"Errore invio notifiche: {e}")
 
+async def health(request):
+    return web.Response(text="OK", status=200)
+
 # --- Main entrypoint ---
 def main():
     if not TELEGRAM_TOKEN or not GOOGLE_CREDENTIALS:
@@ -294,15 +298,19 @@ def main():
     dp.add_handler(CommandHandler("storico", bot.history))
     dp.add_handler(CommandHandler("notifica", bot.toggle_notifica))
 
-    # --- Webhook support ---
     if RENDER_EXTERNAL_URL:
+        app = web.Application()
+        app.router.add_get("/health", health)
+        
         updater.start_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path=TELEGRAM_TOKEN,
-            webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
+            webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}",
+            web_app=app
         )
         logger.info(f"✅ Webhook configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
+        logger.info(f"✅ Healthcheck disponibile su: {RENDER_EXTERNAL_URL}/health")
     else:
         updater.start_polling()
         logger.info("✅ Polling avviato")
