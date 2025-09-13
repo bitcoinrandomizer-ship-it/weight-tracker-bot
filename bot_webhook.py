@@ -324,7 +324,6 @@ def main():
     
     # Avvia il server aiohttp (Render richiede run_app)
     web.run_app(app, host="0.0.0.0", port=PORT)
-    updater.idle()
 
 if __name__ == '__main__':
     main()
