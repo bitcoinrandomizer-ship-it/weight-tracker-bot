@@ -308,10 +308,7 @@ def main():
     dp.add_handler(CommandHandler("storico", bot.history))
     dp.add_handler(CommandHandler("notifica", bot.toggle_notifica))
 
-    if RENDER_EXTERNAL_URL:
-        app = web.Application()
-        app.router.add_get("/health", health)
-        
+    if RENDER_EXTERNAL_URL:      
         updater.start_webhook(
             listen="0.0.0.0",
             port=PORT,
