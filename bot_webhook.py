@@ -1,7 +1,8 @@
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+import asyncio
 
 import pytz
 import gspread
@@ -275,8 +276,17 @@ class WeightTrackerBot:
         except Exception as e:
             logger.error(f"Errore invio notifiche: {e}")
 
-async def health(request):
+async def handle_health(request):
     return web.Response(text="OK", status=200)
+
+async def start_web_server():
+    app = web.Application()
+    app.add_routes([web.get('/health', handle_health)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"✅ Health server running on port {PORT}")
 
 # --- Main entrypoint ---
 def main():
@@ -306,11 +316,9 @@ def main():
             listen="0.0.0.0",
             port=PORT,
             url_path=TELEGRAM_TOKEN,
-            webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}",
-            web_app=app
+            webhook_url=f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}"
         )
         logger.info(f"✅ Webhook configurato: {RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
-        logger.info(f"✅ Healthcheck disponibile su: {RENDER_EXTERNAL_URL}/health")
     else:
         updater.start_polling()
         logger.info("✅ Polling avviato")
@@ -319,8 +327,11 @@ def main():
     job_queue = updater.job_queue
     job_queue.run_daily(
         bot.send_daily_notifications,
-        time=datetime.time(hour=8, minute=0, tzinfo=TIMEZONE)
+        time=time(hour=8, minute=0, tzinfo=TIMEZONE)
     )
+    
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_web_server())
 
     updater.idle()
 
