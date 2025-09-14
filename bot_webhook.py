@@ -276,29 +276,6 @@ class WeightTrackerBot:
         except Exception as e:
             logger.error(f"Errore invio notifiche: {e}")
 
-async def scheduler(bot: WeightTrackerBot, updater):
-    while True:
-        now = datetime.now(TIMEZONE)
-        target = datetime.combine(now.date(), time(8, 0, tzinfo=TIMEZONE))
-        
-        # se siamo già oltre le 8:00, manda il reminder domani
-        if now >= target:
-            target += timedelta(days=1)
-
-        # calcola quanti secondi mancano alle 8
-        wait_seconds = (target - now).total_seconds()
-        logger.info(f"⏳ Prossima notifica alle {target} (tra {wait_seconds/60:.1f} minuti)")
-
-        # dorme fino alle 8 (rilasciando l’event loop, quindi niente CPU sprecata)
-        await asyncio.sleep(wait_seconds)
-
-        # prova a mandare le notifiche
-        try:
-            bot.send_daily_notifications(updater)  # NB: passiamo updater, non context
-            logger.info("✅ Notifiche giornaliere inviate")
-        except Exception as e:
-            logger.error(f"Errore scheduler: {e}")
-
 
 async def handle_health(request):
     return web.Response(text="OK", status=200)
@@ -309,6 +286,13 @@ async def handle_webhook(request):
     update = Update.de_json(data, updater.bot)
     updater.dispatcher.process_update(update)
     return web.Response(text="OK")
+
+async def handle_notify(request):
+    updater = request.app['updater']
+    bot = request.app['bot']
+    logger.info("📩 Trigger ricevuto su /notify, invio notifiche...")
+    bot.send_daily_notifications(updater)
+    return web.Response(text="Notifiche inviate")
 
 # --- Main entrypoint ---
 def main():
@@ -329,10 +313,6 @@ def main():
     dp.add_handler(CommandHandler("media", bot.weekly_average))
     dp.add_handler(CommandHandler("storico", bot.history))
     dp.add_handler(CommandHandler("notifica", bot.toggle_notifica))
-    
-    # Avvia lo scheduler asincrono per le notifiche giornaliere
-    loop = asyncio.get_event_loop()
-    loop.create_task(scheduler(bot, updater))
 
     # Configura il webhook Telegram
     updater.bot.set_webhook(f"{RENDER_EXTERNAL_URL}/{TELEGRAM_TOKEN}")
@@ -341,7 +321,9 @@ def main():
     # --- Server aiohttp ---
     app = web.Application()
     app['updater'] = updater
+    app['bot'] = bot
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/notify", handle_notify)
     app.router.add_post(f"/{TELEGRAM_TOKEN}", handle_webhook)
     logger.info("✅ Server aiohttp pronto su /health e webhook")
     
